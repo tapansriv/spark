@@ -27,6 +27,7 @@ import org.apache.hadoop.mapred.FileSplit
 import org.apache.hadoop.mapreduce._
 import org.apache.hadoop.mapreduce.task.TaskAttemptContextImpl
 import org.apache.parquet.filter2.compat.FilterCompat
+import org.apache.parquet.filter2.compat.RowGroupFilter
 import org.apache.parquet.filter2.predicate.FilterApi
 import org.apache.parquet.format.converter.ParquetMetadataConverter.SKIP_ROW_GROUPS
 import org.apache.parquet.hadoop._
@@ -289,6 +290,13 @@ class ParquetFileFormat
         val iter = new RecordReaderIterator(vectorizedReader)
         try {
           vectorizedReader.initialize(split, hadoopAttemptContext, Option.apply(fileFooter))
+          val filteredRowGroups = RowGroupFilter.getLastResult
+          // if NULL then the table scanned all row groups (skipped the Filter entirely)
+          if (filteredRowGroups != null) {
+            val selectedRowGroups = filteredRowGroups.accepted
+            logInfo(s"Selected Row Groups for file ${filePath}: ${selectedRowGroups.toString}")
+          }
+
           logDebug(s"Appending $partitionSchema ${file.partitionValues}")
           vectorizedReader.initBatch(partitionSchema, file.partitionValues)
           if (returningBatch) {
