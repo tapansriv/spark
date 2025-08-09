@@ -295,6 +295,8 @@ class ParquetFileFormat
           if (filteredRowGroups != null) {
             val selectedRowGroups = filteredRowGroups.accepted
             logInfo(s"Selected Row Groups for file ${filePath}: ${selectedRowGroups.toString}")
+            selectedRowGroups.forEach(rg => logInfo(
+              s"Selected Row Group Ordinals for file ${filePath}: ${rg.getOrdinal}"))
           }
 
           logDebug(s"Appending $partitionSchema ${file.partitionValues}")
