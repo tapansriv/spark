@@ -19,6 +19,7 @@ package org.apache.spark.sql.execution.datasources.parquet
 
 import scala.collection.JavaConverters._
 import scala.collection.mutable
+import scala.collection.mutable.ListBuffer
 import scala.util.{Failure, Try}
 
 import org.apache.hadoop.conf.Configuration
@@ -42,6 +43,7 @@ import org.apache.spark.sql.catalyst.parser.LegacyTypeStringParser
 import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
 import org.apache.spark.sql.catalyst.util.DateTimeUtils
 import org.apache.spark.sql.errors.QueryExecutionErrors
+import org.apache.spark.sql.execution.SQLExecution
 import org.apache.spark.sql.execution.datasources._
 import org.apache.spark.sql.execution.vectorized.{ConstantColumnVector, OffHeapColumnVector, OnHeapColumnVector}
 import org.apache.spark.sql.internal.SQLConf
@@ -199,6 +201,13 @@ class ParquetFileFormat
       assert(supportBatch(sparkSession, resultSchema))
     }
 
+    val rowGroupMap = mutable.Map.empty[String, mutable.Set[Int]]
+    val execId = sparkSession.sparkContext.getLocalProperty(SQLExecution.EXECUTION_ID_KEY)
+    assert(execId != null)
+    val acc = new RowGroupAccumulator
+    sparkSession.sparkContext.register(acc, "RowGroupAccumulator")
+    RowGroupMetricsRegistry.put(execId, acc)
+
     (file: PartitionedFile) => {
       assert(file.partitionValues.numFields == partitionSchema.size)
 
@@ -291,12 +300,19 @@ class ParquetFileFormat
         try {
           vectorizedReader.initialize(split, hadoopAttemptContext, Option.apply(fileFooter))
           val filteredRowGroups = RowGroupFilter.getLastResult
+          val rowGroupIds = new ListBuffer[Int]()
+
           // if NULL then the table scanned all row groups (skipped the Filter entirely)
           if (filteredRowGroups != null) {
             val selectedRowGroups = filteredRowGroups.accepted
-            logInfo(s"Selected Row Groups for file ${filePath}: ${selectedRowGroups.toString}")
-            selectedRowGroups.forEach(rg => logInfo(
-              s"Selected Row Group Ordinals for file ${filePath}: ${rg.getOrdinal}"))
+            selectedRowGroups.forEach{ rg =>
+              rowGroupIds += rg.getOrdinal
+            }
+          } else {
+            rowGroupIds += -1
+          }
+          if (rowGroupIds.nonEmpty) {
+            acc.add(file.filePath.toString -> rowGroupIds.toList)
           }
 
           logDebug(s"Appending $partitionSchema ${file.partitionValues}")

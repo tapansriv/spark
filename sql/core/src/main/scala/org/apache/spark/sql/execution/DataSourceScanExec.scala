@@ -534,6 +534,8 @@ case class FileSourceScanExec(
     }
   }
 
+  val execId: String = sparkContext.getLocalProperty(SQLExecution.EXECUTION_ID_KEY)
+
   lazy val inputRDD: RDD[InternalRow] = {
     val options = relation.options +
       (FileFormat.OPTION_RETURNING_BATCH -> supportsColumnar.toString)
