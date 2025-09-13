@@ -21,30 +21,39 @@ import scala.collection.mutable
 
 import org.apache.spark.util.AccumulatorV2
 
-class RowGroupAccumulator extends AccumulatorV2[(String, Seq[Int]), Map[String, Seq[Int]]] {
-  private val backing = mutable.HashMap.empty[String, Vector[Int]]
-  override def isZero: Boolean = backing.isEmpty
+package object parquet {
+  type RowGroupInfo = (Int, Long, Long)
+  type FileGroups = (String, Seq[RowGroupInfo])
+  type AccumulatorType = AccumulatorV2[FileGroups, Map[String, Seq[RowGroupInfo]]]
+}
 
-  override def copy(): AccumulatorV2[(String, Seq[Int]), Map[String, Seq[Int]]] = {
-    val c = new RowGroupAccumulator
-    c.backing ++= backing
-    c
-  }
+// class RowGroupAccumulator extends AccumulatorV2[(String, Seq[(Int, Long, Long)]),
+// Map[String, Seq[(Int, Long, Long)]]] {
+class RowGroupAccumulator extends parquet.AccumulatorType {
+    private val backing = mutable.HashMap.empty[String, Vector[parquet.RowGroupInfo]]
+    override def isZero: Boolean = backing.isEmpty
 
-  override def reset(): Unit = this.backing.clear()
+    override def copy(): parquet.AccumulatorType = {
+      val c = new RowGroupAccumulator
+      c.backing ++= backing
+      c
+    }
 
-  override def add(v: (String, Seq[Int])): Unit = {
-    val (file, groups) = v
-    val prev = backing.getOrElse(file, Vector.empty)
-    backing.update(file, prev ++ groups)
-  }
+    override def reset(): Unit = this.backing.clear()
 
-  override def merge(other: AccumulatorV2[(String, Seq[Int]), Map[String, Seq[Int]]]): Unit = {
-    other.value.foreach { case (file, groups) =>
+    override def add(v: parquet.FileGroups): Unit = {
+      val (file, groups) = v
       val prev = backing.getOrElse(file, Vector.empty)
       backing.update(file, prev ++ groups)
     }
-  }
 
-  override def value: Map[String, Seq[Int]] = backing.view.mapValues(_.toSeq).toMap
+    override def merge(other: parquet.AccumulatorType): Unit = {
+      other.value.foreach { case (file, groups) =>
+        val prev = backing.getOrElse(file, Vector.empty)
+        backing.update(file, prev ++ groups)
+      }
+    }
+
+    override def value: Map[String, Seq[parquet.RowGroupInfo]] =
+      backing.view.mapValues(_.toSeq).toMap
 }

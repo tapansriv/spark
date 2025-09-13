@@ -300,19 +300,19 @@ class ParquetFileFormat
         try {
           vectorizedReader.initialize(split, hadoopAttemptContext, Option.apply(fileFooter))
           val filteredRowGroups = RowGroupFilter.getLastResult
-          val rowGroupIds = new ListBuffer[Int]()
+          val rowGroupInfo = new ListBuffer[(Int, Long, Long)]
 
           // if NULL then the table scanned all row groups (skipped the Filter entirely)
           if (filteredRowGroups != null) {
             val selectedRowGroups = filteredRowGroups.accepted
             selectedRowGroups.forEach{ rg =>
-              rowGroupIds += rg.getOrdinal
+              rowGroupInfo += ((rg.getOrdinal, rg.getRowIndexOffset, rg.getRowCount))
             }
           } else {
-            rowGroupIds += -1
+            rowGroupInfo += ((-1, 0, -1))
           }
-          if (rowGroupIds.nonEmpty) {
-            acc.add(file.filePath.toString -> rowGroupIds.toList)
+          if (rowGroupInfo.nonEmpty) {
+            acc.add(file.filePath.toString -> rowGroupInfo.toList)
           }
 
           logDebug(s"Appending $partitionSchema ${file.partitionValues}")
