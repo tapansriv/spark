@@ -204,9 +204,7 @@ class ParquetFileFormat
     val rowGroupMap = mutable.Map.empty[String, mutable.Set[Int]]
     val execId = sparkSession.sparkContext.getLocalProperty(SQLExecution.EXECUTION_ID_KEY)
     assert(execId != null)
-    val acc = new RowGroupAccumulator
-    sparkSession.sparkContext.register(acc, "RowGroupAccumulator")
-    RowGroupMetricsRegistry.put(execId, acc)
+    val acc = RowGroupMetricsRegistry.getOrCreate(execId, sparkSession.sparkContext)
 
     (file: PartitionedFile) => {
       assert(file.partitionValues.numFields == partitionSchema.size)
@@ -298,18 +296,25 @@ class ParquetFileFormat
         // Instead, we use FileScanRDD's task completion listener to close this iterator.
         val iter = new RecordReaderIterator(vectorizedReader)
         try {
+          // lastResult is a ThreadLocal that RowGroupFilter only sets when a filter is pushed
+          // down. Executor threads are reused across tasks and queries, so without clearing it
+          // an unfiltered scan would pick up a previous task's (possibly another file's) result.
+          RowGroupFilter.clearResult()
           vectorizedReader.initialize(split, hadoopAttemptContext, Option.apply(fileFooter))
           val filteredRowGroups = RowGroupFilter.getLastResult
           val rowGroupInfo = new ListBuffer[(Int, Long, Long)]
 
-          // if NULL then the table scanned all row groups (skipped the Filter entirely)
+          // if NULL then no filter was pushed down and every row group in this split is read.
+          // fileFooter was read with the split's range, so its blocks are exactly those.
           if (filteredRowGroups != null) {
             val selectedRowGroups = filteredRowGroups.accepted
             selectedRowGroups.forEach{ rg =>
               rowGroupInfo += ((rg.getOrdinal, rg.getRowIndexOffset, rg.getRowCount))
             }
           } else {
-            rowGroupInfo += ((-1, 0, -1))
+            fileFooter.getBlocks.forEach { rg =>
+              rowGroupInfo += ((rg.getOrdinal, rg.getRowIndexOffset, rg.getRowCount))
+            }
           }
           if (rowGroupInfo.nonEmpty) {
             acc.add(file.filePath.toString -> rowGroupInfo.toList)

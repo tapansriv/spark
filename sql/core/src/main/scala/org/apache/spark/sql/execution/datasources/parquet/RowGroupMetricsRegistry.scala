@@ -20,20 +20,34 @@ package org.apache.spark.sql.execution.datasources.parquet
 import java.util
 import java.util.concurrent.ConcurrentHashMap
 
+import org.apache.spark.SparkContext
+
 object RowGroupMetricsRegistry {
   private val byExecId = new ConcurrentHashMap[String, RowGroupAccumulator]()
   val keys = new util.ArrayList[String]()
 
   def put(execId: String, acc: RowGroupAccumulator): Unit = {
-    keys.add(execId)
+    keys.synchronized { keys.add(execId) }
     byExecId.put(execId, acc)
   }
+
+  // A query plans one FileSourceScanExec per scanned relation (plus any in subqueries), and
+  // each calls buildReaderWithPartitionValues under the same execution ID. They must share a
+  // single accumulator: put() would let each scan replace the previous one, leaving only the
+  // last scan's row groups in the registry.
+  def getOrCreate(execId: String, sc: SparkContext): RowGroupAccumulator =
+    byExecId.computeIfAbsent(execId, id => {
+      val acc = new RowGroupAccumulator
+      sc.register(acc, "RowGroupAccumulator")
+      keys.synchronized { keys.add(id) }
+      acc
+    })
 
   def get(execId: String): Option[RowGroupAccumulator] =
     Option(byExecId.get(execId))
 
   def remove(execId: String): Unit = {
-    keys.remove(execId)
+    keys.synchronized { keys.remove(execId) }
     byExecId.remove(execId)
   }
 }
