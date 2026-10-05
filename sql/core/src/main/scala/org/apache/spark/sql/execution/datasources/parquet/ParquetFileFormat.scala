@@ -304,8 +304,12 @@ class ParquetFileFormat
         // Instead, we use FileScanRDD's task completion listener to close this iterator.
         val iter = new RecordReaderIterator(vectorizedReader)
         try {
+          // The capture is a per-thread value; clear it so this file can never read the
+          // previous file's result (the parquet side now also records unfiltered reads).
+          RowGroupFilter.clearResult()
           vectorizedReader.initialize(split, hadoopAttemptContext, Option.apply(fileFooter))
           val filteredRowGroups = RowGroupFilter.getLastResult
+          RowGroupFilter.clearResult()
           val rowGroupInfo = new ListBuffer[(Int, Long, Long)]
 
           // if NULL then the table scanned all row groups (skipped the Filter entirely)
