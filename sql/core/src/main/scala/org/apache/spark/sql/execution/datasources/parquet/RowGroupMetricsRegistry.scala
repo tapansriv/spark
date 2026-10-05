@@ -18,25 +18,35 @@
 package org.apache.spark.sql.execution.datasources.parquet
 
 import java.util
-import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.{ConcurrentHashMap, CopyOnWriteArrayList}
 
 object RowGroupMetricsRegistry {
-  private val byExecId = new ConcurrentHashMap[String, RowGroupAccumulator]()
+  // ParquetFileFormat registers one accumulator per Parquet scan, so a query with several
+  // scans (any join, or one table read twice) registers several under one execution id.
+  // put() used to replace the previous one, so only the last scan's row groups could be read
+  // back: a join of partsupp and part reported part only. Keep all of them.
+  private val byExecId = new ConcurrentHashMap[String, CopyOnWriteArrayList[RowGroupAccumulator]]()
   val keys = new util.ArrayList[String]()
 
   def put(execId: String, acc: RowGroupAccumulator): Unit = {
     keys.add(execId)
-    byExecId.put(execId, acc)
+    byExecId.computeIfAbsent(execId, _ => new CopyOnWriteArrayList[RowGroupAccumulator]()).add(acc)
   }
 
+  /** Every scan's accumulator for this execution, in registration order. */
+  def getAll(execId: String): Seq[RowGroupAccumulator] = {
+    val accs = byExecId.get(execId)
+    if (accs == null) Seq.empty
+    else accs.toArray(new Array[RowGroupAccumulator](0)).toSeq
+  }
+
+  /** The most recently registered accumulator only, i.e. the old single-scan behaviour, kept
+   *  so existing callers compile. Use getAll to see every scan. */
   def get(execId: String): Option[RowGroupAccumulator] =
-    Option(byExecId.get(execId))
+    getAll(execId).lastOption
 
   def remove(execId: String): Unit = {
     keys.remove(execId)
     byExecId.remove(execId)
   }
 }
-
-
-
