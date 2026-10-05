@@ -205,7 +205,13 @@ class ParquetFileFormat
     val execId = sparkSession.sparkContext.getLocalProperty(SQLExecution.EXECUTION_ID_KEY)
     assert(execId != null)
     val acc = new RowGroupAccumulator
-    sparkSession.sparkContext.register(acc, "RowGroupAccumulator")
+    // Unnamed on purpose. For a named accumulator the DAGScheduler attaches acc.value (here a
+    // copy of the whole row-group map so far) to every task-end event, which the status store
+    // and the event log keep as strings: O(tasks^2) driver memory, CPU on the scheduler
+    // thread, and event-log volume. At TPC-H SF1000 on 16 workers that was 13 GB of event log
+    // and 14 GB of driver heap within one 22-query pass. Unnamed accumulators still merge
+    // normally; the listener reads them through RowGroupMetricsRegistry, not by name.
+    sparkSession.sparkContext.register(acc)
     RowGroupMetricsRegistry.put(execId, acc)
 
     (file: PartitionedFile) => {
