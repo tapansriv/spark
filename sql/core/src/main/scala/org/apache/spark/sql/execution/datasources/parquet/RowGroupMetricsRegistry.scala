@@ -26,7 +26,11 @@ object RowGroupMetricsRegistry {
   // put() used to replace the previous one, so only the last scan's row groups could be read
   // back: a join of partsupp and part reported part only. Keep all of them.
   private val byExecId = new ConcurrentHashMap[String, CopyOnWriteArrayList[RowGroupAccumulator]]()
-  val keys = new util.ArrayList[String]()
+  // put() runs on whichever thread plans the scan, and the scans of one query can be planned
+  // concurrently (scalar subqueries are). A plain ArrayList corrupts on concurrent add; it
+  // surfaced in the placement harness as "ArrayIndexOutOfBoundsException: Index 34 out of
+  // bounds for length 33" on TPC-DS q6. Synchronized, and still a java.util.List for callers.
+  val keys: util.List[String] = util.Collections.synchronizedList(new util.ArrayList[String]())
 
   def put(execId: String, acc: RowGroupAccumulator): Unit = {
     keys.add(execId)
